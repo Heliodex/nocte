@@ -125,9 +125,10 @@ end
 function bigint.__div(a, b)
 	if getmetatable(a) ~= bigint or getmetatable(b) ~= bigint then
 		return bigint.new(a) / bigint.new(b)
-	end
-	if a == big0 or b == big0 or a < b then
+	elseif a == big0 or b == big0 or a < b then
 		return big0
+	elseif a == b then
+		return big1
 	elseif a.signed and b.signed then
 		return -a / -b
 	elseif a.signed or b.signed then
@@ -140,7 +141,7 @@ function bigint.__div(a, b)
 	end
 	local digit = #dividend
 	for i = 1, #a - digit + 1 do
-		result[i] = b + if b <= dividend then 1 else 0
+		result[i] = if b + b <= dividend then 1 else 0
 		while (result[i] + 1) * b <= dividend do
 			result[i] += 1
 		end
@@ -166,7 +167,11 @@ function bigint.__pow(a, b: number)
 end
 
 function bigint.__mod(a, b)
-	if a.signed and b.signed then
+	if a == big0 or a < b then
+		return a
+	elseif a == b then
+		return big0
+	elseif a.signed and b.signed then
 		return -a % -b
 	elseif a.signed or b.signed then
 		return a:abs() % b:abs()
@@ -227,12 +232,10 @@ function bigint.__lt(a, b)
 end
 
 function bigint.abs(self: BigInt): BigInt
-	print "abs()"
 	return if self.signed then -self else self
 end
 
 function bigint.tonumber(self: BigInt): number
-	print "tonumber()"
 	local result = 0
 	for i = 1, #self do
 		result += self.digits[i] * 10 ^ (#self - i)
