@@ -1,7 +1,3 @@
-local function HEX(x: number) -- returns string of 8 lowercase hexadecimal digits
-	return string.format("%08x", x % 4294967296)
-end
-
 local W = {} -- temporary table shared between all calculations (to avoid creating new temporary table every time)
 
 local sha2_K_hi = {
@@ -194,30 +190,17 @@ return function(message: string): { number }
 		0x1f83d9ab,
 		0x5be0cd19,
 	}
-	local length, tail = 0, ""
-
-	if not tail then
-		error("Adding more chunks is not allowed after receiving the result", 2)
-	end
-	length += #message
+	local length = #message
 	local offs = 0
-	if tail ~= "" and #tail + #message >= 64 then
-		offs = 64 - #tail
-		sha256_feed_64(H, tail .. string.sub(message, 1, offs), 0, 64)
-		tail = ""
-	end
-	local size = #message - offs
+	local size = length - offs
 	local size_tail = size % 64
 	sha256_feed_64(H, message, offs, size - size_tail)
-	tail ..= string.sub(message, #message + 1 - size_tail)
 
-	if not tail then
-		return byteify(H)
-	end
-
-	local final_blocks =
-		{ tail, "\128", string.rep("\0", (-9 - length) % 64 + 1) }
-	tail = nil
+	local final_blocks = {
+		string.sub(message, length + 1 - size_tail),
+		"\128",
+		string.rep("\0", (-9 - length) % 64 + 1),
+	}
 	-- Assuming user data length is shorter than (2^53)-9 bytes
 	-- Anyway, it looks very unrealistic that someone would spend more than a year of calculations to process 2^53 bytes of data by using this Lua script :-)
 	-- 2^53 bytes = 2^56 bits, so "bit-counter" fits in 7 bytes
