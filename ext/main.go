@@ -1,28 +1,28 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/csv"
+	"encoding/hex"
 	"fmt"
 	"math/big"
 	"os"
-	"encoding/hex"
-	"bytes"
 )
 
 var (
-	// fffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2f
-	p, _ = new(big.Int).SetString("fffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2f", 16)
-	// fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141
-	n, _ = new(big.Int).SetString("ffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141", 16)
-	// 79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798
+	p, _  = new(big.Int).SetString("fffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2f", 16)
+	n, _  = new(big.Int).SetString("fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141", 16)
 	Gx, _ = new(big.Int).SetString("79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798", 16)
-	// 483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8
 	Gy, _ = new(big.Int).SetString("483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8", 16)
 )
 
 type Point struct {
 	x, y *big.Int
+}
+
+func (p Point) String() string {
+	return fmt.Sprintf("{'x': %s, 'y': %s}", p.x.String(), p.y.String())
 }
 
 var G = Point{Gx, Gy}
@@ -36,17 +36,19 @@ func taggedHash(tag string, message []byte) []byte {
 	return h.Sum(nil)
 }
 
-func x(p *Point) *big.Int {
+func assertNotInfinity(p *Point) {
 	if p == nil {
 		panic("Point is at infinity")
 	}
+}
+
+func x(p *Point) *big.Int {
+	assertNotInfinity(p)
 	return p.x
 }
 
 func y(p *Point) *big.Int {
-	if p == nil {
-		panic("Point is at infinity")
-	}
+	assertNotInfinity(p)
 	return p.y
 }
 
@@ -98,26 +100,28 @@ func add(p1, p2 *Point) *Point {
 	return &Point{x3, y3}
 }
 
-func mul(p *Point, n *big.Int) *Point {
+func mul(p1 *Point, n1 *big.Int) *Point {
 	var r *Point
 	for i := range 256 {
 		if new(big.Int).And(
-			new(big.Int).Rsh(n, uint(i)),
+			new(big.Int).Rsh(n1, uint(i)),
 			big.NewInt(1),
-		) == big.NewInt(1) {
-			r = add(r, p)
+		).Cmp(big.NewInt(1)) == 0 {
+			r = add(r, p1)
 		}
-		p = add(p, p)
-		println("r is", r)
+		p1 = add(p1, p1)
 	}
-	if r == nil {
-		panic("Point is at infinity")
-	}
+	assertNotInfinity(r)
 	return r
 }
 
 func bytesFromInt(i *big.Int) []byte {
-	return i.Bytes()
+	b := i.Bytes()
+	// pad out to 32 bytes
+	if len(b) < 32 {
+		b = append(bytes.Repeat([]byte{0}, 32-len(b)), b...)
+	}
+	return b
 }
 
 func bytesFromPoint(p Point) []byte {
@@ -150,7 +154,7 @@ func liftX(x *big.Int) *Point {
 		return nil
 	}
 
-	if new(big.Int).And(y, big.NewInt(1)) == big.NewInt(0) {
+	if new(big.Int).And(y, big.NewInt(1)).Cmp(big.NewInt(0)) == 0 {
 		return &Point{x, y}
 	} else {
 		return &Point{x, new(big.Int).Sub(p, y)}
@@ -159,7 +163,7 @@ func liftX(x *big.Int) *Point {
 
 func intFromBytes(b []byte) *big.Int {
 	result := new(big.Int)
-	for _, v:= range b {
+	for _, v := range b {
 		result.Mul(result, big.NewInt(256))
 		result.Add(result, big.NewInt(int64(v)))
 	}
@@ -167,10 +171,8 @@ func intFromBytes(b []byte) *big.Int {
 }
 
 func hasEvenY(p *Point) bool {
-	if p == nil {
-		panic("Point is at infinity")
-	}
-	return new(big.Int).Mod(y(p), big.NewInt(2)) == big.NewInt(0)
+	assertNotInfinity(p)
+	return new(big.Int).Mod(y(p), big.NewInt(2)).Cmp(big.NewInt(0)) == 0
 }
 
 func pubkeyGen(seckey []byte) []byte {
@@ -180,9 +182,7 @@ func pubkeyGen(seckey []byte) []byte {
 		panic("The secret key must be an integer in the range 1..n-1.")
 	}
 	P := mul(&G, d0)
-	if P == nil {
-		panic("Point is at infinity")
-	}
+	assertNotInfinity(P)
 	return bytesFromPoint(*P)
 }
 
@@ -195,33 +195,31 @@ func schnorrSign(message, seckey, auxRand []byte) []byte {
 		panic("auxRand must be 32 bytes")
 	}
 	P := mul(&G, d0)
-	if P == nil {
-		panic("Point is at infinity")
-	}
+	assertNotInfinity(P)
 	var d *big.Int
 	if hasEvenY(P) {
 		d = d0
 	} else {
 		d = new(big.Int).Sub(n, d0)
 	}
-	t := xorBytes(bytesFromInt(d), taggedHash("BIP0340/challenge", auxRand))
+	t := xorBytes(bytesFromInt(d), taggedHash("BIP0340/aux", auxRand))
 	// hashTag = t + bytesFromPoint(P) + message
 	hashTag := append(t, bytesFromPoint(*P)...)
 	hashTag = append(hashTag, message...)
-	k0 := intFromBytes(taggedHash("BIP0340/nonce", hashTag))
-	if k0 == big.NewInt(0) {
+	k0 := new(big.Int).Mod(intFromBytes(taggedHash("BIP0340/nonce", hashTag)), n)
+	if k0.Cmp(big.NewInt(0)) == 0 {
 		panic("Failure. This happens only with negligible probability.")
 	}
 	R := mul(&G, k0)
-	if R == nil {
-		panic("Point is at infinity")
-	}
+	assertNotInfinity(R)
+
 	var k *big.Int
 	if hasEvenY(R) {
 		k = k0
 	} else {
 		k = new(big.Int).Sub(n, k0)
 	}
+
 	// hashTag2 = bytesFromPoint(R) + bytesFromPoint(P) + message
 	hashTag2 := append(bytesFromPoint(*R), bytesFromPoint(*P)...)
 	hashTag2 = append(hashTag2, message...)
@@ -229,14 +227,15 @@ func schnorrSign(message, seckey, auxRand []byte) []byte {
 	e := new(big.Int).Mod(intFromBytes(tagged), n)
 
 	sig := bytesFromPoint(*R)
-	sig = append(sig, bytesFromInt(
-		new(big.Int).Mod(
-			new(big.Int).Add(k, new(big.Int).Mul(e, d)),
-			n,
-		),
-	)...)
+	sig = append(sig, bytesFromInt(new(big.Int).Mod(
+		new(big.Int).Add(k, new(big.Int).Mul(e, d)),
+		n,
+	))...)
 
-	if !schnorrVerify(message, bytesFromPoint(*P), sig) {
+	sig2 := make([]byte, 64)
+	copy(sig2, sig) // that's mutability for ya
+
+	if !schnorrVerify(message, bytesFromPoint(*P), sig2) {
 		panic("The created signature does not pass verification.")
 	}
 	return sig
@@ -244,9 +243,9 @@ func schnorrSign(message, seckey, auxRand []byte) []byte {
 
 func schnorrVerify(message, pubkey, sig []byte) bool {
 	if len(pubkey) != 32 {
-		panic("The public key must be a 32-byte array.")
+		panic(fmt.Sprintf("The public key must be a 32-byte array, got %d.", len(pubkey)))
 	} else if len(sig) != 64 {
-		panic("The signature must be a 64-byte array.")
+		panic(fmt.Sprintf("The signature must be a 64-byte array, got %d.", len(sig)))
 	}
 	P := liftX(intFromBytes(pubkey))
 	r := intFromBytes(sig[:32])
@@ -257,7 +256,8 @@ func schnorrVerify(message, pubkey, sig []byte) bool {
 	}
 
 	// hashTag = sig[:32] + pubkey + message
-	hashTag := append(sig[:32], pubkey...)
+	hashTag := sig[:32]
+	hashTag = append(hashTag, pubkey...)
 	hashTag = append(hashTag, message...)
 
 	e := new(big.Int).Mod(
@@ -271,7 +271,7 @@ func schnorrVerify(message, pubkey, sig []byte) bool {
 		mul(&G, s),
 		mul(P, new(big.Int).Sub(n, e)),
 	)
-	return R != nil && hasEvenY(R) && x(R) == r
+	return R != nil && hasEvenY(R) && x(R).Cmp(r) == 0
 }
 
 // aux
@@ -279,6 +279,10 @@ func schnorrVerify(message, pubkey, sig []byte) bool {
 func bytesFromHex(str string) []byte {
 	b, _ := hex.DecodeString(str)
 	return b
+}
+
+func hexFromBytes(b []byte) string {
+	return hex.EncodeToString(b)
 }
 
 // it's Testing Time
@@ -322,8 +326,8 @@ func main() {
 			// compare pubkey with pubkeyActual
 			if !bytes.Equal(pubkey, pubkeyActual) {
 				fmt.Println(" * Failed key generation.")
-				fmt.Println("   Expected key:", pubkey)
-				fmt.Println("     Actual key:", pubkeyActual)
+				fmt.Println("   Expected key:", hexFromBytes(pubkey))
+				fmt.Println("     Actual key:", hexFromBytes(pubkeyActual))
 				allPassed = false
 			}
 			auxRand := bytesFromHex(auxRandHex)
@@ -332,8 +336,8 @@ func main() {
 				fmt.Println(" * Passed signing test.")
 			} else {
 				fmt.Println(" * Failed signing test.")
-				fmt.Println("   Expected signature:", sig)
-				fmt.Println("     Actual signature:", sigActual)
+				fmt.Println("   Expected signature:", hexFromBytes(sig))
+				fmt.Println("     Actual signature:", hexFromBytes(sigActual))
 				allPassed = false
 			}
 		}
