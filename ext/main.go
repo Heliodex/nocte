@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"log"
 	"math/big"
 	"os"
 )
@@ -191,7 +190,7 @@ func main() {
 
 	if len(args) < 4 {
 		fmt.Fprint(os.Stderr, "Too few arguments")
-		os.Exit(1)
+		os.Exit(64)
 	}
 
 	command := args[0]
@@ -201,6 +200,11 @@ func main() {
 		pubkey, _ := hex.DecodeString(args[2])
 		sig, _ := hex.DecodeString(args[3])
 
-		fmt.Println(schnorrVerify(hash, pubkey, sig))
+		res := schnorrVerify(hash, pubkey, sig)
+
+		if res {
+			os.Exit(0)
+		}
+		os.Exit(1)
 	}
 }

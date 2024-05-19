@@ -1,3 +1,5 @@
+-- Not using boatbomber and howmanysmaII's implementation because I DESPISE howmanysmaII
+
 local W = {} -- temporary table shared between all calculations (to avoid creating new temporary table every time)
 
 local sha2_K_hi = {
