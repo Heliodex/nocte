@@ -1,33 +1,7 @@
-local function deepCopy(original: { [any]: any })
-	local copy = {}
-	for k, v in original do
-		if type(v) == "table" then
-			v = deepCopy(v)
-		end
-		copy[k] = v
-	end
-	return copy
-end
-
-type Serialisable = string | number | boolean | { [Serialisable]: Serialisable }
-
-export type Store<K, V> = {
-	rawData: { [K]: V },
-	set: (key: K, value: V) -> (),
-	get: (key: K) -> V,
-	dump: () -> { [Serialisable]: Serialisable },
-	serialise: () -> string,
-}
-
-type StoreImpl<K, V> = {
-	new: () -> Store<K, V>,
-	fromSerialised: (data: string) -> Store<K, V>,
-}
-
-local Store: StoreImpl<any, any> = {} :: StoreImpl<any, any>
+export type Serialisable = string | number | boolean | { [Serialisable]: Serialisable }
 
 -- serialisation
-local function serProperty<V>(prop: V): string
+local function serProperty<V>(prop: V)
 	if type(prop) == "string" then
 		return `[{#prop}]{prop}`
 	elseif type(prop) == "number" then
@@ -45,7 +19,7 @@ local function serProperty<V>(prop: V): string
 end
 
 -- deserialisation
-local function deserialiseStore(bk: string): { [Serialisable]: Serialisable }
+local function deserialiseStore(bk): { [Serialisable]: Serialisable }
 	local i = 1
 	local char = string.sub(bk, i, i)
 
@@ -54,7 +28,7 @@ local function deserialiseStore(bk: string): { [Serialisable]: Serialisable }
 		char = string.sub(bk, i, i)
 	end
 
-	local function getString(): string
+	local function getString()
 		-- string of the form [n]string, the part inside the brackets is the length of the string
 		local stringLen = string.match(bk, "%[(%d+)%]", i)
 		local numStringLen = tonumber(stringLen)
@@ -106,7 +80,7 @@ local function deserialiseStore(bk: string): { [Serialisable]: Serialisable }
 	local function matchKeyValuePair(): (Serialisable, Serialisable)
 		local key: Serialisable
 		local value: Serialisable
-		
+
 		-- to start, we're in a key
 		key = getProperty()
 
@@ -149,10 +123,30 @@ local function deserialiseStore(bk: string): { [Serialisable]: Serialisable }
 	return getTable()
 end
 
-local function createStore<K, V>(data: { [K]: V }): Store<K, V>
-	local store = {
-		rawData = data,
-	}
+local function deepCopy(original: { [any]: any })
+	local copy = {}
+	for k, v in original do
+		if type(v) == "table" then
+			v = deepCopy(v)
+		end
+		copy[k] = v
+	end
+	return copy
+end
+
+export type Store<K, V> = {
+	set: (key: K, value: V) -> (),
+	get: (key: K) -> V,
+	dump: () -> { [K]: V },
+	serialise: () -> string,
+}
+
+local function Store<K, V>(serialised: string?): Store<K, V>
+	local rawData = (
+		if serialised then deserialiseStore(serialised) else {}
+	) :: { [K]: V }
+
+	local store = {}
 	local keyType = ""
 
 	function store.set(key: K, value: V)
@@ -168,34 +162,26 @@ local function createStore<K, V>(data: { [K]: V }): Store<K, V>
 			value = deepCopy(value)
 		end
 
-		store.rawData[key] = value
+		rawData[key] = value
 	end
 
 	function store.get(key: K): V
-		local value = store.rawData[key]
+		local value = rawData[key]
 		if type(value) == "table" then
 			return deepCopy(value)
 		end
 		return value
 	end
 
-	function store.dump(): { [Serialisable]: Serialisable }
-		return deepCopy(store.rawData)
+	function store.dump(): { [K]: V }
+		return deepCopy(rawData)
 	end
 
 	function store.serialise(): string
-		return serProperty(store.rawData)
+		return serProperty(rawData)
 	end
 
 	return store
-end
-
-function Store.new(): Store<any, any>
-	return createStore {}
-end
-
-function Store.fromSerialised(data: string): Store<any, any>
-	return createStore(deserialiseStore(data))
 end
 
 return Store

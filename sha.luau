@@ -1,6 +1,6 @@
 -- Not using boatbomber and howmanysmaII's implementation because I DESPISE howmanysmaII
 
-local W = {} -- temporary table shared between all calculations (to avoid creating new temporary table every time)
+local W = {}
 
 local sha2_K_hi = {
 	0x428a2f98,
@@ -84,6 +84,90 @@ local sha2_K_hi = {
 	0x5fcb6fab,
 	0x6c44198c,
 }
+
+local function sha1_feed_64(
+	H: { number },
+	str: string,
+	offs: number,
+	size: number
+)
+	-- offs >= 0, size >= 0, size is multiple of 64
+	local h1, h2, h3, h4, h5 = H[1], H[2], H[3], H[4], H[5]
+	for pos = offs, offs + size - 1, 64 do
+		for j = 1, 16 do
+			pos = pos + 4
+			local a, b, c, d = string.byte(str, pos - 3, pos)
+			W[j] = ((a * 256 + b) * 256 + c) * 256 + d
+		end
+		for j = 17, 80 do
+			local a = bit32.bxor(W[j - 3], W[j - 8], W[j - 14], W[j - 16])
+				% 2 ^ 32
+				* 2
+			local b = a % 2 ^ 32
+			W[j] = b + (a - b) / 2 ^ 32
+		end
+		local a, b, c, d, e = h1, h2, h3, h4, h5
+		for j = 1, 20 do
+			local a5 = a * 2 ^ 5
+			local z = a5 % 2 ^ 32
+			z = z
+				+ (a5 - z) / 2 ^ 32
+				+ bit32.band(b, c)
+				+ bit32.band(-1 - b, d)
+				+ 0x5A827999
+				+ W[j]
+				+ e -- constant = floor(2^30 * sqrt(2))
+			e = d
+			d = c
+			c = b / 2 ^ 2
+			c = c % 1 * (2 ^ 32 - 1) + c
+			b = a
+			a = z % 2 ^ 32
+		end
+		for j = 21, 40 do
+			local a5 = a * 2 ^ 5
+			local z = a5 % 2 ^ 32
+			z += (a5 - z) / 2 ^ 32 + bit32.bxor(b, c, d) + 0x6ed9eba1 + W[j] + e -- 2^30 * sqrt(3)
+			e = d
+			d = c
+			c = b / 2 ^ 2
+			c = c % 1 * (2 ^ 32 - 1) + c
+			b = a
+			a = z % 2 ^ 32
+		end
+		for j = 41, 60 do
+			local a5 = a * 2 ^ 5
+			local z = a5 % 2 ^ 32
+			z += (a5 - z) / 2 ^ 32 + bit32.band(d, c) + bit32.band(
+				b,
+				bit32.bxor(d, c)
+			) + 0x8f1bbcdc + W[j] + e -- 2^30 * sqrt(5)
+			e = d
+			d = c
+			c = b / 2 ^ 2
+			c = c % 1 * (2 ^ 32 - 1) + c
+			b = a
+			a = z % 2 ^ 32
+		end
+		for j = 61, 80 do
+			local a5 = a * 2 ^ 5
+			local z = a5 % 2 ^ 32
+			z += (a5 - z) / 2 ^ 32 + bit32.bxor(b, c, d) + 0xCA62C1D6 + W[j] + e -- 2^30 * sqrt(10)
+			e = d
+			d = c
+			c = b / 2 ^ 2
+			c = c % 1 * (2 ^ 32 - 1) + c
+			b = a
+			a = z % 2 ^ 32
+		end
+		h1 = (a + h1) % 2 ^ 32
+		h2 = (b + h2) % 2 ^ 32
+		h3 = (c + h3) % 2 ^ 32
+		h4 = (d + h4) % 2 ^ 32
+		h5 = (e + h5) % 2 ^ 32
+	end
+	H[1], H[2], H[3], H[4], H[5] = h1, h2, h3, h4, h5
+end
 
 local function sha256_feed_64(
 	H: { number },
@@ -180,7 +264,38 @@ local function byteify(chunks: { number }): { number }
 	return result
 end
 
-return function(message: string): { number }
+local function sha1(message: string): { number }
+	-- Create an instance (private objects for current calculation)
+	local H = {
+		0x67452301,
+		0xefcdab89,
+		0x98badcfe,
+		0x10325476,
+		0xc3d2e1f0,
+	}
+	local length = #message
+	local offs = 0
+	local size = length - offs
+	local size_tail = size % 64
+	sha1_feed_64(H, message, offs, size - size_tail)
+
+	local final_blocks = {
+		string.sub(message, length + 1 - size_tail),
+		"\128",
+		string.rep("\0", (-9 - length) % 64 + 1),
+	}
+
+	length *= (8 / 256 ^ 7) -- convert "byte-counter" to "bit-counter" and move decimal point to the left
+	for j = 4, 10 do
+		length = (length % 1) * 256
+		final_blocks[j] = string.char(math.floor(length))
+	end
+	local blockstr = table.concat(final_blocks)
+	sha1_feed_64(H, blockstr, 0, #blockstr)
+	return byteify(H)
+end
+
+local function sha256(message: string): { number }
 	-- Create an instance (private objects for current calculation)
 	local H = {
 		0x6a09e667,
@@ -203,10 +318,8 @@ return function(message: string): { number }
 		"\128",
 		string.rep("\0", (-9 - length) % 64 + 1),
 	}
-	-- Assuming user data length is shorter than (2^53)-9 bytes
-	-- Anyway, it looks very unrealistic that someone would spend more than a year of calculations to process 2^53 bytes of data by using this Lua script :-)
-	-- 2^53 bytes = 2^56 bits, so "bit-counter" fits in 7 bytes
-	length *= (8 / 256 ^ 7) -- convert "byte-counter" to "bit-counter" and move decimal point to the left
+
+	length *= (8 / 256 ^ 7) -- convert "byte-counter" to "bit-counter" and move decimal point to t1 left
 	for j = 4, 10 do
 		length = (length % 1) * 256
 		final_blocks[j] = string.char(math.floor(length))
@@ -215,3 +328,8 @@ return function(message: string): { number }
 	sha256_feed_64(H, blockstr, 0, #blockstr)
 	return byteify(H)
 end
+
+return {
+	sha1 = sha1,
+	sha256 = sha256,
+}
