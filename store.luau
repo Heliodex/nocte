@@ -1,4 +1,8 @@
-export type Serialisable = string | number | boolean | { [Serialisable]: Serialisable }
+export type Serialisable =
+	string
+	| number
+	| boolean
+	| { [Serialisable]: Serialisable }
 
 -- serialisation
 local function serProperty<V>(prop: V)
@@ -9,11 +13,12 @@ local function serProperty<V>(prop: V)
 	elseif type(prop) == "boolean" then
 		return if prop then "t" else "f"
 	elseif type(prop) == "table" then
-		local str = "{"
+		local strings = { "{" }
 		for k, v in prop do
-			str ..= `{serProperty(k)}:{serProperty(v)},`
+			table.insert(strings, `{serProperty(k)}:{serProperty(v)},`)
 		end
-		return str .. "}"
+		table.insert(strings, "}")
+		return table.concat(strings)
 	end
 	error(`Cannot serialise value of type {type(prop)}`)
 end
@@ -23,27 +28,25 @@ local function deserialiseStore(bk): { [Serialisable]: Serialisable }
 	local i = 1
 	local char = string.sub(bk, i, i)
 
+	if char ~= "{" then
+		error(`Expected store start, got {char} at {i}`)
+	end
+
 	local function increment()
 		i += 1
 		char = string.sub(bk, i, i)
 	end
+	increment()
 
 	local function getString()
 		-- string of the form [n]string, the part inside the brackets is the length of the string
 		local stringLen = string.match(bk, "%[(%d+)%]", i)
-		local numStringLen = tonumber(stringLen)
-		if stringLen and numStringLen then
+		if stringLen then
 			i += 1 + #stringLen
-			local keyEnd = i + numStringLen
 
-			local key = ""
-
-			while i < keyEnd do
-				i += 1
-				key ..= string.sub(bk, i, i)
-			end
-
-			return key
+			local pi = i
+			i += tonumber(stringLen) or 0
+			return string.sub(bk, pi + 1, i)
 		end
 		error(`Invalid key length, expected number, got {stringLen}`)
 	end
@@ -51,10 +54,9 @@ local function deserialiseStore(bk): { [Serialisable]: Serialisable }
 	local function getNumber(): number
 		-- number of the form... number
 		local num = string.match(bk, "%d+", i)
-		local numNum = tonumber(num) -- *sense your stimulates*
-		if num and numNum then
+		if num then
 			i += #num - 1
-			return numNum
+			return tonumber(num) or 0
 		end
 		error(`Invalid number, expected number, got {num}`)
 	end
@@ -98,7 +100,6 @@ local function deserialiseStore(bk): { [Serialisable]: Serialisable }
 		if char ~= "," then
 			error(`Expected value end indicator after value, got {char} at {i}`)
 		end
-		increment()
 
 		return key, value
 	end
@@ -108,9 +109,9 @@ local function deserialiseStore(bk): { [Serialisable]: Serialisable }
 
 		while true do
 			-- to start, we're in a key
-			increment()
 			local key, value = matchKeyValuePair()
 			tableData[key] = value
+			increment()
 
 			if char == "}" then
 				break
@@ -123,21 +124,20 @@ local function deserialiseStore(bk): { [Serialisable]: Serialisable }
 	return getTable()
 end
 
-local function deepCopy(original: { [any]: any })
+local function deepCopy(original: any): any
+	if type(original) ~= "table" then
+		return original
+	end
+
 	local copy = {}
 	for k, v in original do
-		if type(v) == "table" then
-			v = deepCopy(v)
-		end
-		copy[k] = v
+		copy[k] = deepCopy(v)
 	end
 	return copy
 end
-
 export type Store<K, V> = {
 	set: (key: K, value: V) -> (),
 	get: (key: K) -> V,
-	dump: () -> { [K]: V },
 	serialise: () -> string,
 }
 
@@ -150,31 +150,20 @@ local function Store<K, V>(serialised: string?): Store<K, V>
 	local keyType = ""
 
 	function store.set(key: K, value: V)
-		-- todo: have table keys work properly
-
 		if keyType == "" then
 			keyType = type(key)
+			if type(key) == "table" then
+				error "Cannot use table as key type (yet?)"
+			end
 		elseif type(key) ~= keyType then
 			error(`Expected key type to be {keyType}, got {type(key)}`)
 		end
 
-		if type(value) == "table" then
-			value = deepCopy(value)
-		end
-
-		rawData[key] = value
+		rawData[key] = deepCopy(value)
 	end
 
 	function store.get(key: K): V
-		local value = rawData[key]
-		if type(value) == "table" then
-			return deepCopy(value)
-		end
-		return value
-	end
-
-	function store.dump(): { [K]: V }
-		return deepCopy(rawData)
+		return deepCopy(rawData[key])
 	end
 
 	function store.serialise(): string
