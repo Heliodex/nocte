@@ -41,53 +41,155 @@ local function maybeObject(json: string)
 	return first == lbrace and last == rbrace
 end
 
+local handleTypes = {
+	EVENT = function(request: net.WebSocket, event: any) end,
+	REQ = function(request: net.WebSocket, ...: any) end,
+	CLOSE = function(request: net.WebSocket, id: string) end,
+}
+
+local function handleRequest(request: net.WebSocket)
+	local event = request.next() :: string
+	if not event then
+		request.send(msg.invalid "empty request, expected body")
+		return
+	elseif event == "" then
+		request.send(msg.invalid "empty body, expected message")
+		return
+	elseif maybeObject(event) then
+		request.send(
+			msg.invalid "message appears to be a json object, expected array"
+		)
+		return
+	elseif not maybeArray(event) then
+		request.send(msg.invalid "message must be a json array")
+		return
+	end
+
+	local ok, decoded = pcall(jsonDecode, event)
+	if not ok then
+		request.send(msg.invalid "message json could not be decoded")
+		return
+	elseif #decoded == 0 then -- May be an empty array or an object
+		request.send(msg.invalid "message array is empty")
+		return
+	elseif #decoded < 2 then
+		request.send(
+			msg.invalid "message array is too short, must contain at least 2 elements"
+		)
+		return
+	end
+
+	local first = decoded[1]
+	if type(first) ~= "string" then
+		request.send(
+			msg.invalid "message array first element (message type) must be a string"
+		)
+		return
+	elseif first ~= "EVENT" and first ~= "REQ" and first ~= "CLOSE" then
+		request.send(
+			msg.invalid "invalid message type - must be of EVENT, REQ, CLOSE"
+		)
+		return
+	end
+
+	local contents = { select(2, table.unpack(decoded)) }
+
+	if first == "EVENT" then
+		if #contents ~= 1 then
+			request.send(
+				msg.invalid "EVENT message can only contain 1 element (event data)"
+			)
+			return
+		end
+
+		local eventData = contents[1]
+
+		if type(eventData) ~= "table" then
+			request.send(msg.invalid "event data must be a json object")
+			return
+		elseif #eventData > 0 then
+			request.send(
+				msg.invalid "event data appears to be a json array, expected object"
+			)
+			return
+		end
+
+		local allowedFields =
+			{ "id", "pubkey", "created_at", "kind", "tags", "content", "sig" }
+		local originalLen = #allowedFields
+
+		for k, v in eventData do
+			local found = table.find(allowedFields, k)
+			if found then
+				table.remove(allowedFields, found)
+			else
+				request.send(
+					msg.invalid(
+						`invalid field in event data: {k}. must be one of {table.concat(
+							allowedFields,
+							", "
+						)}`
+					)
+				)
+				return
+			end
+		end
+
+		local currentLen = #allowedFields
+
+		if originalLen == currentLen then
+			request.send(
+				msg.invalid "event data must not be empty"
+			)
+			return
+		elseif currentLen > 0 then
+			request.send(
+				msg.invalid(
+					`missing field{if #allowedFields > 1 then "s" else ""} in event data: {table.concat(
+						allowedFields,
+						", "
+					)}`
+				)
+			)
+			return
+		end
+	elseif first == "REQ" then
+		local subscriptionId = contents[1]
+
+		if type(subscriptionId) ~= "string" then
+			request.send(msg.invalid "subscription id must be a string")
+			return
+		elseif subscriptionId == "" then
+			request.send(
+				msg.invalid "subscription id cannot be an empty string"
+			)
+			return
+		end
+	elseif first == "CLOSE" then
+		if #contents ~= 1 then
+			request.send(
+				msg.invalid "CLOSE message can only contain 1 element (subscription id)"
+			)
+			return
+		end
+
+		local subscriptionId = contents[1]
+
+		if type(subscriptionId) ~= "string" then
+			request.send(msg.invalid "subscription id must be a string")
+			return
+		elseif subscriptionId == "" then
+			request.send(
+				msg.invalid "subscription id cannot be an empty string"
+			)
+			return
+		end
+	end
+end
+
 local function handleWebSocket(request: net.WebSocket)
 	while true do
-		local event = request.next() :: string
-		if not event then
-			request.send(msg.invalid "empty request")
-			continue
-		elseif event == "" then
-			request.send(msg.invalid "empty message")
-			continue
-		elseif maybeObject(event) then
-			request.send(
-				msg.invalid "message appears to be a json object, expected array"
-			)
-			continue
-		elseif not maybeArray(event) then
-			request.send(msg.invalid "message must be a json array")
-			continue
-		end
-
-		local ok, decoded = pcall(jsonDecode, event)
-		if not ok then
-			request.send(msg.invalid "message json could not be decoded")
-			continue
-		elseif #decoded == 0 then -- May be an empty array or an object
-			request.send(msg.invalid "message array is empty")
-			continue
-		elseif #decoded < 2 then
-			request.send(
-				msg.invalid "message array is too short, must contain at least 2 elements"
-			)
-			continue
-		end
-
-		local first = decoded[1]
-		if type(first) ~= "string" then
-			request.send(
-				msg.invalid "message array first element must be a string"
-			)
-			continue
-		elseif first ~= "EVENT" and first ~= "REQ" and first ~= "CLOSE" then
-			request.send(
-				msg.invalid "invalid message type - must be of EVENT, REQ, CLOSE"
-			)
-			continue
-		end
-
-		handleMessage(request, decoded)
+		handleRequest(request)
 	end
 end
 
