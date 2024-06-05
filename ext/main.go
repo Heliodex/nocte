@@ -194,7 +194,7 @@ func main() {
 	}
 
 	command := args[0]
-	
+
 	if command == "verify" {
 		hash, _ := hex.DecodeString(args[1])
 		pubkey, _ := hex.DecodeString(args[2])

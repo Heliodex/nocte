@@ -1,5 +1,7 @@
 local net = require "@lune/net"
+local process = require "@lune/process"
 local serde = require "@lune/serde"
+local sha256 = require "sha"
 
 local function jsonEncode(data: any): string
 	return serde.encode("json", data)
@@ -7,6 +9,43 @@ end
 
 local function jsonDecode(data: string)
 	return serde.decode("json", data)
+end
+
+local function isHex(str: string)
+	return string.match(str, "^[0-9a-f]+$")
+end
+
+local function bytesToHex(bytes: { number })
+	local hex = ""
+	for _, v in bytes do
+		hex ..= string.format("%02x", v)
+	end
+	return hex
+end
+
+local function hashEvent(
+	pubkey: string,
+	created_at: number,
+	kind: number,
+	tags: { { string } },
+	content: string
+)
+	-- JSON serialisation may cause issues due to empty arrays being serialised as empty objects instead
+	local encodedTags = {}
+	for _, v in tags do
+		local encodedTag = jsonEncode(v)
+		if encodedTag == "{}" then
+			encodedTag = "[]"
+		end
+		table.insert(encodedTags, encodedTag)
+	end
+
+	local event = `[0,"{pubkey}",{created_at},{kind},[{table.concat(
+		encodedTags,
+		","
+	)}],{jsonEncode(content)}]`
+
+	return bytesToHex(sha256(event))
 end
 
 local msg = {
@@ -17,14 +56,13 @@ local msg = {
 	notice = function(message: string)
 		return jsonEncode { "NOTICE", message }
 	end,
+	error = function(message: string)
+		return jsonEncode { "NOTICE", `error: {message}` }
+	end,
 	invalid = function(message: string)
 		return jsonEncode { "NOTICE", `invalid: {message}` }
 	end,
 }
-
-local function handleMessage(request: net.WebSocket, event: { any })
-	request.send(msg.notice "success, unimplemented")
-end
 
 local lbracket, rbracket, lbrace, rbrace =
 	string.byte "[", string.byte "]", string.byte "{", string.byte "}"
@@ -41,77 +79,140 @@ local function maybeObject(json: string)
 	return first == lbrace and last == rbrace
 end
 
-local handleTypes = {
-	EVENT = function(request: net.WebSocket, event: any) end,
-	REQ = function(request: net.WebSocket, ...: any) end,
-	CLOSE = function(request: net.WebSocket, id: string) end,
+local checks = {
+	id = function(id: string): string?
+		if type(id) ~= "string" then
+			return "event id must be a string"
+		elseif #id ~= 64 then
+			return "event id must be 64 characters long"
+		elseif not isHex(id) then
+			return "event id must be a lowercase hexadecimal string"
+		end
+		return
+	end,
+	pubkey = function(pubkey: string): string?
+		if type(pubkey) ~= "string" then
+			return "event pubkey must be a string"
+		elseif #pubkey ~= 64 then
+			return "event pubkey must be 64 characters long"
+		elseif not isHex(pubkey) then
+			return "event pubkey must be a lowercase hexadecimal string"
+		end
+		return
+	end,
+	created_at = function(created_at: number): string?
+		if type(created_at) ~= "number" then
+			return "event created_at must be a number"
+		elseif created_at % 1 ~= 0 then
+			return "event created_at must be an integer"
+		end
+		return
+	end,
+	kind = function(kind: number): string?
+		if type(kind) ~= "number" then
+			return "event kind must be a number"
+		elseif kind % 1 ~= 0 then
+			return "event kind must be an integer"
+		elseif kind < 0 or kind > 65535 then
+			return "event kind must be between 0 and 65535"
+		end
+		return
+	end,
+	tags = function(tags: { { string } }): string?
+		for i, v in tags do
+			if type(i) ~= "number" then
+				return "invalid non-numerical key in tags array"
+			end
+			for i2, v2 in v do
+				if type(i) ~= "number" then
+					return "invalid non-numerical key in tag"
+				elseif type(v2) ~= "string" then
+					return "tag must be an array of strings"
+				end
+			end
+		end
+		return
+	end,
+	content = function(content: string): string?
+		if type(content) ~= "string" then
+			return "event content must be a string"
+		end
+		return
+	end,
+	sig = function(sig: string): string?
+		if type(sig) ~= "string" then
+			return "event sig must be a string"
+		elseif #sig ~= 128 then
+			return "event sig must be 128 characters long"
+		elseif not isHex(sig) then
+			return "event sig must be a lowercase hexadecimal string"
+		end
+		return
+	end,
 }
 
-local function handleRequest(request: net.WebSocket)
+local handleTypes = {
+	EVENT = function(request: net.WebSocket, event: any)
+		print "EVENT"
+	end,
+	REQ = function(request: net.WebSocket, ...: any)
+		print "REQ"
+	end,
+	CLOSE = function(request: net.WebSocket, id: string)
+		print "CLOSE"
+	end,
+}
+
+local function handleRequest(
+	request: net.WebSocket,
+	subscriptions: { [string]: any }
+): nil
+	local function invalid(message: string)
+		request.send(msg.invalid(message))
+	end
+
 	local event = request.next() :: string
 	if not event then
-		request.send(msg.invalid "empty request, expected body")
 		return
 	elseif event == "" then
-		request.send(msg.invalid "empty body, expected message")
-		return
+		return invalid "empty body, expected message"
 	elseif maybeObject(event) then
-		request.send(
-			msg.invalid "message appears to be a json object, expected array"
-		)
-		return
+		return invalid "message appears to be a json object, expected array"
 	elseif not maybeArray(event) then
-		request.send(msg.invalid "message must be a json array")
-		return
+		return invalid "message must be a json array"
 	end
 
 	local ok, decoded = pcall(jsonDecode, event)
 	if not ok then
-		request.send(msg.invalid "message json could not be decoded")
-		return
-	elseif #decoded == 0 then -- May be an empty array or an object
-		request.send(msg.invalid "message array is empty")
-		return
+		return invalid "message json could not be decoded"
+	elseif #decoded == 0 then
+		return invalid "message array is empty, must contain at least 2 elements"
 	elseif #decoded < 2 then
-		request.send(
-			msg.invalid "message array is too short, must contain at least 2 elements"
-		)
-		return
+		return invalid "message array is too short, must contain at least 2 elements"
 	end
 
 	local first = decoded[1]
 	if type(first) ~= "string" then
-		request.send(
-			msg.invalid "message array first element (message type) must be a string"
-		)
-		return
+		return invalid "message array first element (message type) must be a string"
 	elseif first ~= "EVENT" and first ~= "REQ" and first ~= "CLOSE" then
-		request.send(
-			msg.invalid "invalid message type - must be of EVENT, REQ, CLOSE"
+		return invalid(
+			`invalid message type: {first}. must be one of EVENT, REQ, CLOSE`
 		)
-		return
 	end
 
 	local contents = { select(2, table.unpack(decoded)) }
 
 	if first == "EVENT" then
 		if #contents ~= 1 then
-			request.send(
-				msg.invalid "EVENT message can only contain 1 element (event data)"
-			)
-			return
+			return invalid "EVENT message can only contain 1 element (event data)"
 		end
 
 		local eventData = contents[1]
 
 		if type(eventData) ~= "table" then
-			request.send(msg.invalid "event data must be a json object")
-			return
+			return invalid "event data must be a json object"
 		elseif #eventData > 0 then
-			request.send(
-				msg.invalid "event data appears to be a json array, expected object"
-			)
-			return
+			return invalid "event data appears to be a json array, expected object"
 		end
 
 		local allowedFields =
@@ -123,73 +224,97 @@ local function handleRequest(request: net.WebSocket)
 			if found then
 				table.remove(allowedFields, found)
 			else
-				request.send(
-					msg.invalid(
-						`invalid field in event data: {k}. must be one of {table.concat(
-							allowedFields,
-							", "
-						)}`
-					)
+				local missingFields = table.concat(allowedFields, ", ")
+				return invalid(
+					`invalid field in event data: {k}. must be one of {missingFields}`
 				)
-				return
 			end
 		end
 
 		local currentLen = #allowedFields
 
 		if originalLen == currentLen then
-			request.send(
-				msg.invalid "event data must not be empty"
-			)
-			return
+			return invalid "event data must not be empty"
 		elseif currentLen > 0 then
-			request.send(
-				msg.invalid(
-					`missing field{if #allowedFields > 1 then "s" else ""} in event data: {table.concat(
-						allowedFields,
-						", "
-					)}`
-				)
+			local missingFields = table.concat(allowedFields, ", ")
+			return invalid(
+				`missing field{if #allowedFields > 1 then "s" else ""} in event data: {missingFields}`
 			)
-			return
 		end
+
+		for k, v in eventData do
+			local res = checks[k](v)
+			if res then
+				return invalid(res)
+			end
+		end
+
+		local hash = hashEvent(
+			eventData.pubkey,
+			eventData.created_at,
+			eventData.kind,
+			eventData.tags,
+			eventData.content
+		)
+
+		if hash ~= eventData.id then
+			return invalid "event id does not match the sha-256 hash of the serialised event data"
+		end
+
+		local res = process.spawn("./ext/nocte-external", {
+			"verify",
+			hash,
+			eventData.pubkey,
+			eventData.sig,
+		})
+
+		if not res.ok then
+			return invalid "event sig does not match the public key"
+		end
+
+		-- the event is valid
+
+		request.send(msg.notice "success")
 	elseif first == "REQ" then
 		local subscriptionId = contents[1]
 
 		if type(subscriptionId) ~= "string" then
-			request.send(msg.invalid "subscription id must be a string")
-			return
+			return invalid "subscription id must be a string"
 		elseif subscriptionId == "" then
-			request.send(
-				msg.invalid "subscription id cannot be an empty string"
-			)
-			return
+			return invalid "subscription id cannot be an empty string"
+		elseif #subscriptionId > 64 then
+			return invalid "subscription id cannot be longer than 64 characters"
 		end
 	elseif first == "CLOSE" then
 		if #contents ~= 1 then
-			request.send(
-				msg.invalid "CLOSE message can only contain 1 element (subscription id)"
-			)
-			return
+			return invalid "CLOSE message can only contain 1 element (subscription id)"
 		end
 
 		local subscriptionId = contents[1]
 
 		if type(subscriptionId) ~= "string" then
-			request.send(msg.invalid "subscription id must be a string")
-			return
+			return invalid "subscription id must be a string"
 		elseif subscriptionId == "" then
-			request.send(
-				msg.invalid "subscription id cannot be an empty string"
-			)
-			return
+			return invalid "subscription id cannot be an empty string"
+		elseif #subscriptionId > 64 then
+			return invalid "subscription id cannot be longer than 64 characters"
+		elseif not subscriptions[subscriptionId] then
+			return invalid "subscription id does not exist"
 		end
+
+		subscriptions[subscriptionId] = nil
 	end
+	return nil
 end
 
 local function handleWebSocket(request: net.WebSocket)
+	local subscriptions = {}
 	while true do
-		handleRequest(request)
+		local ok, err = pcall(handleRequest, request, subscriptions)
+		if not ok then
+			print("error occured", err)
+			request.send(msg.error "internal server error")
+		end
 	end
 end
 
