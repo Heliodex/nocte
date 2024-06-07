@@ -50,7 +50,9 @@ end
 
 local msg = {
 	event = function() end,
-	ok = function() end,
+	ok = function(id: string, ok: boolean, message: string)
+		return jsonEncode({ "OK", id, ok, message } :: { any })
+	end,
 	eose = function() end,
 	closed = function() end,
 	notice = function(message: string)
@@ -170,6 +172,9 @@ local function handleRequest(
 	local function invalid(message: string)
 		request.send(msg.invalid(message))
 	end
+	local function ok(id: string, ok: boolean, message: string)
+		request.send(msg.ok(id, ok, message))
+	end
 
 	local event = request.next() :: string
 	if not event then
@@ -182,8 +187,8 @@ local function handleRequest(
 		return invalid "message must be a json array"
 	end
 
-	local ok, decoded = pcall(jsonDecode, event)
-	if not ok then
+	local ok1, decoded = pcall(jsonDecode, event)
+	if not ok1 then
 		return invalid "message json could not be decoded"
 	elseif #decoded == 0 then
 		return invalid "message array is empty, must contain at least 2 elements"
@@ -207,38 +212,47 @@ local function handleRequest(
 			return invalid "EVENT message can only contain 1 element (event data)"
 		end
 
-		local eventData = contents[1]
+		local eventData: {
+			id: string,
+			pubkey: string,
+			created_at: number,
+			kind: number,
+			tags: { { string } },
+			content: string,
+			sig: string,
+		} =
+			contents[1]
 
 		if type(eventData) ~= "table" then
 			return invalid "event data must be a json object"
-		elseif #eventData > 0 then
+		elseif #(eventData :: any) > 0 then
 			return invalid "event data appears to be a json array, expected object"
 		end
 
-		local allowedFields =
+		local requiredFields =
 			{ "id", "pubkey", "created_at", "kind", "tags", "content", "sig" }
-		local originalLen = #allowedFields
+		local originalLen = #requiredFields
 
 		for k, v in eventData do
-			local found = table.find(allowedFields, k)
+			local found = table.find(requiredFields, k :: string)
 			if found then
-				table.remove(allowedFields, found)
+				table.remove(requiredFields, found)
 			else
-				local missingFields = table.concat(allowedFields, ", ")
+				local missingFields = table.concat(requiredFields, ", ")
 				return invalid(
 					`invalid field in event data: {k}. must be one of {missingFields}`
 				)
 			end
 		end
 
-		local currentLen = #allowedFields
+		local currentLen = #requiredFields
 
 		if originalLen == currentLen then
 			return invalid "event data must not be empty"
 		elseif currentLen > 0 then
-			local missingFields = table.concat(allowedFields, ", ")
+			local missingFields = table.concat(requiredFields, ", ")
 			return invalid(
-				`missing field{if #allowedFields > 1 then "s" else ""} in event data: {missingFields}`
+				`missing field{if #requiredFields > 1 then "s" else ""} in event data: {missingFields}`
 			)
 		end
 
@@ -249,33 +263,47 @@ local function handleRequest(
 			end
 		end
 
-		local hash = hashEvent(
-			eventData.pubkey,
-			eventData.created_at,
-			eventData.kind,
-			eventData.tags,
-			eventData.content
-		)
-
-		if hash ~= eventData.id then
-			return invalid "event id does not match the sha-256 hash of the serialised event data"
+		if
+			hashEvent(
+				eventData.pubkey,
+				eventData.created_at,
+				eventData.kind,
+				eventData.tags,
+				eventData.content
+			) ~= eventData.id
+		then
+			return ok(
+				eventData.id,
+				false,
+				"event id does not match the sha-256 hash of the serialised event data"
+			)
 		end
 
 		local res = process.spawn("./ext/nocte-external", {
 			"verify",
-			hash,
+			eventData.id,
 			eventData.pubkey,
 			eventData.sig,
 		})
 
 		if not res.ok then
-			return invalid "event sig does not match the public key"
+			return ok(
+				eventData.id,
+				false,
+				"event sig does not match the public key"
+			)
 		end
 
 		-- the event is valid
 
-		request.send(msg.notice "success")
+		handleTypes[first](request, eventData)
+
+		return ok(eventData.id, true, "")
 	elseif first == "REQ" then
+		if #contents ~= 2 then
+			return invalid "EVENT message must contain 2 or more elements (subscription id, filters...)"
+		end
+
 		local subscriptionId = contents[1]
 
 		if type(subscriptionId) ~= "string" then
@@ -284,6 +312,30 @@ local function handleRequest(
 			return invalid "subscription id cannot be an empty string"
 		elseif #subscriptionId > 64 then
 			return invalid "subscription id cannot be longer than 64 characters"
+		end
+
+		local filters = { select(2, table.unpack(contents)) }
+		local allowedFields =
+			{ "ids", "authors", "kinds", "since", "until", "limit" }
+
+		for _, filter in filters do
+			if type(filter) ~= "table" then
+				return invalid "filter must be a json object"
+			elseif #(filter :: any) > 0 then
+				return invalid "filter appears to be a json array, expected object"
+			end
+
+			for k, v in filter do
+				if
+					not table.find(allowedFields, k :: string)
+					and not string.match(k, "^#[a-zA-Z]$")
+				then
+					local missingFields = table.concat(allowedFields, ", ")
+					return invalid(
+						`invalid field in filter: {k}. must be one of {missingFields}, or # followed by a letter`
+					)
+				end
+			end
 		end
 	elseif first == "CLOSE" then
 		if #contents ~= 1 then
