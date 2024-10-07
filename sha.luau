@@ -2,7 +2,7 @@
 
 local W = {}
 
-local sha2_K_hi = {
+local sha2Khi = {
 	0x428a2f98,
 	0x71374491,
 	0xb5c0fbcf,
@@ -85,7 +85,7 @@ local sha2_K_hi = {
 	0x6c44198c,
 }
 
-local function sha256_feed_64(
+local function sha256feed64(
 	H: { number },
 	str: string,
 	offs: number,
@@ -127,7 +127,7 @@ local function sha256_feed_64(
 			local z = bit32.band(e, f)
 				+ bit32.band(-1 - e, g)
 				+ h
-				+ sha2_K_hi[j]
+				+ sha2Khi[j]
 				+ W[j]
 				+ bit32.bxor(
 					e6 % 1 * (2 ^ 32 - 1) + e6,
@@ -196,7 +196,7 @@ return function(message: string): { number }
 	local offs = 0
 	local size = length - offs
 	local size_tail = size % 64
-	sha256_feed_64(H, message, offs, size - size_tail)
+	sha256feed64(H, message, offs, size - size_tail)
 
 	local final_blocks = {
 		string.sub(message, length + 1 - size_tail),
@@ -210,6 +210,6 @@ return function(message: string): { number }
 		final_blocks[j] = string.char(math.floor(length))
 	end
 	local blockstr = table.concat(final_blocks)
-	sha256_feed_64(H, blockstr, 0, #blockstr)
+	sha256feed64(H, blockstr, 0, #blockstr)
 	return byteify(H)
 end

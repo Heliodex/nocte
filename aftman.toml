@@ -5,4 +5,4 @@
 [tools]
 stylua = "JohnnyMorganz/StyLua@0.20.0"
 selene = "kampfkarren/selene@0.27.1"
-lune = "lune-org/lune@0.8.4"
+lune = "lune-org/lune@0.8.9"

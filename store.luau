@@ -27,9 +27,12 @@ end
 local function deserialiseStore(bk): { [Serialisable]: Serialisable }
 	local i = 1
 	local char = string.sub(bk, i, i)
-
 	if char ~= "{" then
 		error(`Expected store start, got {char} at {i}`)
+	end
+
+	local function compare(c: string)
+		return char == c
 	end
 
 	local function increment()
@@ -64,15 +67,15 @@ local function deserialiseStore(bk): { [Serialisable]: Serialisable }
 	local getTable
 
 	local function getProperty(): Serialisable
-		if char == "t" then
+		if compare "t" then
 			return true
-		elseif char == "f" then
+		elseif compare "f" then
 			return false
 		elseif tonumber(char) then
 			return getNumber()
-		elseif char == "[" then
+		elseif compare "[" then
 			return getString()
-		elseif char == "{" then
+		elseif compare "{" then
 			return getTable()
 		end
 
@@ -88,7 +91,7 @@ local function deserialiseStore(bk): { [Serialisable]: Serialisable }
 
 		-- match separator
 		increment()
-		if char ~= ":" then
+		if not compare ":" then
 			error(`Expected colon after key, got {char} at {i}`)
 		end
 		increment()
@@ -97,7 +100,7 @@ local function deserialiseStore(bk): { [Serialisable]: Serialisable }
 
 		-- match end
 		increment()
-		if char ~= "," then
+		if not compare "," then
 			error(`Expected value end indicator after value, got {char} at {i}`)
 		end
 
@@ -113,7 +116,7 @@ local function deserialiseStore(bk): { [Serialisable]: Serialisable }
 			tableData[key] = value
 			increment()
 
-			if char == "}" then
+			if compare "}" then
 				break
 			end
 		end
