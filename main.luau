@@ -1,7 +1,6 @@
 local net = require "@lune/net"
 local process = require "@lune/process"
 local serde = require "@lune/serde"
-local sha256 = require "sha"
 
 local function jsonEncode(data: any): string
 	return serde.encode("json", data)
@@ -13,14 +12,6 @@ end
 
 local function isHex(str: string)
 	return string.match(str, "^[0-9a-f]+$")
-end
-
-local function bytesToHex(bytes: { number })
-	local hex = ""
-	for _, v in bytes do
-		hex ..= string.format("%02x", v)
-	end
-	return hex
 end
 
 local function hashEvent(
@@ -45,7 +36,7 @@ local function hashEvent(
 		","
 	)}],{jsonEncode(content)}]`
 
-	return bytesToHex(sha256(event))
+	return serde.hash("sha256", event)
 end
 
 local msg = {
