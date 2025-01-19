@@ -1,0 +1,6 @@
+github.com/Heliodex/litecode v0.0.0-20250117014530-24be2250c21f h1:5XwbVA0i4TXgV5cjehVH1vfiWKEiRNLWQoHSysUSJHw=
+github.com/Heliodex/litecode v0.0.0-20250117014530-24be2250c21f/go.mod h1:Qlzq2VxD5QAIJHRznGGtReujSrrh8y+u3xVJFOzFGOI=
+github.com/Heliodex/litecode v0.0.0-20250117020138-c8fa7910c72e h1:Wb4Y1iX14lrOEE4eGL21ezMCkwxjyRdI7uZaypezVyA=
+github.com/Heliodex/litecode v0.0.0-20250117020138-c8fa7910c72e/go.mod h1:Qlzq2VxD5QAIJHRznGGtReujSrrh8y+u3xVJFOzFGOI=
+golang.org/x/text v0.21.0 h1:zyQAAkrwaneQ066sspRyJaG9VNi/YJ1NfzcGB3hZ/qo=
+golang.org/x/text v0.21.0/go.mod h1:4IBbMaMmOPCJ8SecivzSH54+73PCFmPWxNTLm+vZkEQ=

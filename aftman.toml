@@ -3,6 +3,6 @@
 
 # To add a new tool, add an entry to this table.
 [tools]
-stylua = "JohnnyMorganz/StyLua@0.20.0"
-selene = "kampfkarren/selene@0.27.1"
+stylua = "JohnnyMorganz/StyLua@2.0.2"
+selene = "kampfkarren/selene@0.28.0"
 lune = "lune-org/lune@0.8.9"
