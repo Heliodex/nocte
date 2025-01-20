@@ -1,19 +1,3 @@
-local net = require "@lune/net"
-local process = require "@lune/process"
-local serde = require "@lune/serde"
-
-local function jsonEncode(data: any): string
-	return serde.encode("json", data)
-end
-
-local function jsonDecode(data: string)
-	return serde.decode("json", data)
-end
-
-local function isHex(str: string)
-	return string.match(str, "^[0-9a-f]+$")
-end
-
 local function hashEvent(
 	pubkey: string,
 	created_at: number,
@@ -24,36 +8,34 @@ local function hashEvent(
 	-- JSON serialisation may cause issues due to empty arrays being serialised as empty objects instead
 	local encodedTags = {}
 	for _, v in tags do
-		local encodedTag = jsonEncode(v)
-		if encodedTag == "{}" then
-			encodedTag = "[]"
-		end
+		local encodedTag = json.encodearray(v)
+		if encodedTag == "{}" then encodedTag = "[]" end
 		table.insert(encodedTags, encodedTag)
 	end
 
 	local event = `[0,"{pubkey}",{created_at},{kind},[{table.concat(
 		encodedTags,
 		","
-	)}],{jsonEncode(content)}]`
+	)}],{json.encodestring(content)}]`
 
-	return serde.hash("sha256", event)
+	return sha256(event)
 end
 
 local msg = {
 	event = function() end,
 	ok = function(id: string, ok: boolean, message: string)
-		return jsonEncode({ "OK", id, ok, message } :: { any })
+		return json.encodearray { "OK", id, ok, message }
 	end,
 	eose = function() end,
 	closed = function() end,
 	notice = function(message: string)
-		return jsonEncode { "NOTICE", message }
+		return json.encodearray { "NOTICE", message }
 	end,
 	error = function(message: string)
-		return jsonEncode { "NOTICE", `error: {message}` }
+		return json.encodearray { "NOTICE", `error: {message}` }
 	end,
 	invalid = function(message: string)
-		return jsonEncode { "NOTICE", `invalid: {message}` }
+		return json.encodearray { "NOTICE", `invalid: {message}` }
 	end,
 }
 
@@ -78,7 +60,7 @@ local checks = {
 			return "event id must be a string"
 		elseif #id ~= 64 then
 			return "event id must be 64 characters long"
-		elseif not isHex(id) then
+		elseif not ishex(id) then
 			return "event id must be a lowercase hexadecimal string"
 		end
 		return
@@ -88,7 +70,7 @@ local checks = {
 			return "event pubkey must be a string"
 		elseif #pubkey ~= 64 then
 			return "event pubkey must be 64 characters long"
-		elseif not isHex(pubkey) then
+		elseif not ishex(pubkey) then
 			return "event pubkey must be a lowercase hexadecimal string"
 		end
 		return
@@ -112,6 +94,8 @@ local checks = {
 		return
 	end,
 	tags = function(tags: { { string } }): string?
+		if type(tags) ~= "table" then return "event tags must be an array" end
+
 		for i, v in tags do
 			if type(i) ~= "number" then
 				return "invalid non-numerical key in tags array"
@@ -137,7 +121,7 @@ local checks = {
 			return "event sig must be a string"
 		elseif #sig ~= 128 then
 			return "event sig must be 128 characters long"
-		elseif not isHex(sig) then
+		elseif not ishex(sig) then
 			return "event sig must be a lowercase hexadecimal string"
 		end
 		return
@@ -145,62 +129,63 @@ local checks = {
 }
 
 local handleTypes = {
-	EVENT = function(request: net.WebSocket, event: any)
-		print "EVENT"
-	end,
-	REQ = function(request: net.WebSocket, ...: any)
-		print "REQ"
-	end,
-	CLOSE = function(request: net.WebSocket, id: string)
-		print "CLOSE"
-	end,
+	EVENT = function(ws: Websocket, event: any) print "EVENT" end,
+	REQ = function(ws: Websocket, ...: any) print "REQ" end,
+	CLOSE = function(ws: Websocket, id: string) print "CLOSE" end,
 }
 
-local function handleRequest(
-	request: net.WebSocket,
-	subscriptions: { [string]: any }
-): nil
-	local function invalid(message: string)
-		request.send(msg.invalid(message))
-	end
+local function handler(ws: Websocket, subscriptions: { [string]: any })
+	local function invalid(message: string) ws.send(msg.invalid(message)) end
 	local function ok(id: string, ok: boolean, message: string)
-		request.send(msg.ok(id, ok, message))
+		ws.send(msg.ok(id, ok, message))
 	end
 
-	local event = request.next() :: string
+	local event = ws.next()
 	if not event then
 		return
 	elseif event == "" then
-		return invalid "empty body, expected message"
+		invalid "empty body, expected message"
+		return
 	elseif maybeObject(event) then
-		return invalid "message appears to be a json object, expected array"
+		invalid "message appears to be a json object, expected array"
+		return
 	elseif not maybeArray(event) then
-		return invalid "message must be a json array"
+		invalid "message must be a json array"
+		return
 	end
 
-	local ok1, decoded = pcall(jsonDecode, event)
+	local ok1, decoded = json.decode(event)
 	if not ok1 then
-		return invalid "message json could not be decoded"
+		invalid "message json could not be decoded"
+		return
 	elseif #decoded == 0 then
-		return invalid "message array is empty, must contain at least 2 elements"
+		invalid "message array is empty, must contain at least 2 elements"
+		return
 	elseif #decoded < 2 then
-		return invalid "message array is too short, must contain at least 2 elements"
+		invalid "message array is too short, must contain at least 2 elements"
+		return
 	end
 
-	local first = decoded[1]
+	local d = decoded :: { any }
+
+	local first = d[1]
 	if type(first) ~= "string" then
-		return invalid "message array first element (message type) must be a string"
+		invalid "message array first element (message type) must be a string"
+		return
 	elseif first ~= "EVENT" and first ~= "REQ" and first ~= "CLOSE" then
-		return invalid(
+		invalid(
 			`invalid message type: {first}. must be one of EVENT, REQ, CLOSE`
 		)
+		return
 	end
 
-	local contents = { select(2, table.unpack(decoded)) }
+	local contents = table.clone(d)
+	table.remove(contents, 1)
 
 	if first == "EVENT" then
 		if #contents ~= 1 then
-			return invalid "EVENT message can only contain 1 element (event data)"
+			invalid "EVENT message can only contain 1 element (event data)"
+			return
 		end
 
 		local eventData: {
@@ -215,9 +200,12 @@ local function handleRequest(
 			contents[1]
 
 		if type(eventData) ~= "table" then
-			return invalid "event data must be a json object"
+			print(eventData)
+			invalid "event data must be a json object"
+			return
 		elseif #(eventData :: any) > 0 then
-			return invalid "event data appears to be a json array, expected object"
+			invalid "event data appears to be a json array, expected object"
+			return
 		end
 
 		local requiredFields =
@@ -230,27 +218,32 @@ local function handleRequest(
 				table.remove(requiredFields, found)
 			else
 				local missingFields = table.concat(requiredFields, ", ")
-				return invalid(
+				invalid(
 					`invalid field in event data: {k}. must be one of {missingFields}`
 				)
+				return
 			end
 		end
 
 		local currentLen = #requiredFields
 
 		if originalLen == currentLen then
-			return invalid "event data must not be empty"
+			invalid "event data must not be empty"
+			return
 		elseif currentLen > 0 then
 			local missingFields = table.concat(requiredFields, ", ")
-			return invalid(
+			invalid(
 				`missing field{if #requiredFields > 1 then "s" else ""} in event data: {missingFields}`
 			)
+			return
 		end
 
 		for k, v in eventData do
+			print("checking", k, v)
 			local res = checks[k](v)
 			if res then
-				return invalid(res)
+				invalid(res)
+				return
 			end
 		end
 
@@ -270,14 +263,8 @@ local function handleRequest(
 			)
 		end
 
-		local res = process.spawn("./ext/nocte-external", {
-			"verify",
-			eventData.id,
-			eventData.pubkey,
-			eventData.sig,
-		})
-
-		if not res.ok then
+		local res = verify(eventData.id, eventData.pubkey, eventData.sig)
+		if not res then
 			return ok(
 				eventData.id,
 				false,
@@ -287,22 +274,26 @@ local function handleRequest(
 
 		-- the event is valid
 
-		handleTypes[first](request, eventData)
+		handleTypes[first](ws, eventData)
 
 		return ok(eventData.id, true, "")
 	elseif first == "REQ" then
 		if #contents ~= 2 then
-			return invalid "EVENT message must contain 2 or more elements (subscription id, filters...)"
+			invalid "EVENT message must contain 2 or more elements (subscription id, filters...)"
+			return
 		end
 
 		local subscriptionId = contents[1]
 
 		if type(subscriptionId) ~= "string" then
-			return invalid "subscription id must be a string"
+			invalid "subscription id must be a string"
+			return
 		elseif subscriptionId == "" then
-			return invalid "subscription id cannot be an empty string"
+			invalid "subscription id cannot be an empty string"
+			return
 		elseif #subscriptionId > 64 then
-			return invalid "subscription id cannot be longer than 64 characters"
+			invalid "subscription id cannot be longer than 64 characters"
+			return
 		end
 
 		local filters = { select(2, table.unpack(contents)) }
@@ -311,38 +302,46 @@ local function handleRequest(
 
 		for _, filter in filters do
 			if type(filter) ~= "table" then
-				return invalid "filter must be a json object"
+				invalid "filter must be a json object"
+				return
 			elseif #(filter :: any) > 0 then
-				return invalid "filter appears to be a json array, expected object"
+				invalid "filter appears to be a json array, expected object"
+				return
 			end
 
 			for k, v in filter do
 				if
 					not table.find(allowedFields, k :: string)
-					and not string.match(k, "^#[a-zA-Z]$")
+					and not ishashfield(k)
 				then
 					local missingFields = table.concat(allowedFields, ", ")
-					return invalid(
+					invalid(
 						`invalid field in filter: {k}. must be one of {missingFields}, or # followed by a letter`
 					)
+					return
 				end
 			end
 		end
 	elseif first == "CLOSE" then
 		if #contents ~= 1 then
-			return invalid "CLOSE message can only contain 1 element (subscription id)"
+			invalid "CLOSE message can only contain 1 element (subscription id)"
+			return
 		end
 
 		local subscriptionId = contents[1]
 
 		if type(subscriptionId) ~= "string" then
-			return invalid "subscription id must be a string"
+			invalid "subscription id must be a string"
+			return
 		elseif subscriptionId == "" then
-			return invalid "subscription id cannot be an empty string"
+			invalid "subscription id cannot be an empty string"
+			return
 		elseif #subscriptionId > 64 then
-			return invalid "subscription id cannot be longer than 64 characters"
+			invalid "subscription id cannot be longer than 64 characters"
+			return
 		elseif not subscriptions[subscriptionId] then
-			return invalid "subscription id does not exist"
+			invalid "subscription id does not exist"
+			return
 		end
 
 		subscriptions[subscriptionId] = nil
@@ -350,22 +349,16 @@ local function handleRequest(
 	return nil
 end
 
-local function handleWebSocket(request: net.WebSocket)
+local function handleWebsocket(ws: Websocket)
 	local subscriptions = {}
 	while true do
-		local ok, err = pcall(handleRequest, request, subscriptions)
-		if not ok then
-			print("error occured", err)
-			request.send(msg.error "internal server error")
-		end
+		handler(ws, subscriptions)
 	end
 end
 
-net.serve(3223, {
-	handleRequest = function()
-		return "Please use a Nostr client to connect."
-	end,
-	handleWebSocket = handleWebSocket,
-})
-
 print "http://localhost:3223"
+
+serve(3223, {
+	request = function() return "Please use a Nostr client to connect." end,
+	websocket = handleWebsocket,
+})

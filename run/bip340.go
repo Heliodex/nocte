@@ -156,6 +156,7 @@ func schnorrVerify(message, pubkey, sig []byte) (bool, error) {
 	} else if len(sig) != 64 {
 		return false, fmt.Errorf("the signature must be a 64-byte array, got %d.", len(sig))
 	}
+
 	P := liftX(intFromBytes(pubkey))
 	r := intFromBytes(sig[:32])
 	s := intFromBytes(sig[32:])

@@ -106,6 +106,36 @@ func json_encodearray(args lc.Args) (r lc.Rets, err error) {
 	return lc.Rets{string(res)}, nil
 }
 
+func tconvert(obj any) (any, error) {
+	switch v := obj.(type) {
+	case bool, float64, string, nil:
+		return v, nil
+	case []any:
+		arr := make([]any, len(v))
+		for i, v2 := range v {
+			c, err := tconvert(v2)
+			if err != nil {
+				return nil, err
+			}
+			arr[i] = c
+		}
+
+		return &lc.Table{Array: arr}, nil
+	case map[string]any:
+		h := make(map[any]any, len(v))
+		for k, v := range v {
+			c, err := tconvert(v)
+			if err != nil {
+				return nil, err
+			}
+			h[k] = c
+		}
+
+		return &lc.Table{Hash: h}, nil
+	}
+	return nil, errors.New("unsupported type")
+}
+
 func json_decode(args lc.Args) (r lc.Rets, err error) {
 	obj := args.GetString()
 
@@ -115,20 +145,12 @@ func json_decode(args lc.Args) (r lc.Rets, err error) {
 		return lc.Rets{false, fmt.Sprintf("error decoding json")}, nil
 	}
 
-	switch v := res.(type) {
-	case bool, float64, string, nil:
-		return lc.Rets{true, v}, nil
-	case []any:
-		return lc.Rets{true, &lc.Table{Array: v}}, nil
-	case map[string]any:
-		h := make(map[any]any, len(v))
-		for k, v := range v {
-			h[k] = v
-		}
-
-		return lc.Rets{true, &lc.Table{Hash: h}}, nil
+	c, err := tconvert(res)
+	if err != nil {
+		return nil, err
 	}
-	return nil, errors.New("unsupported type")
+
+	return lc.Rets{true, c}, nil
 }
 
 var libjson = lc.NewTable([][2]any{
@@ -215,7 +237,9 @@ func net_serve(args lc.Args) (r lc.Rets, err error) {
 			return s
 		},
 		func(a2 ...any) {
-			(*wsHandler)(args.Co, a2...)
+			if _, err := (*wsHandler)(args.Co, a2...); err != nil {
+				args.Co.Error(err)
+			}
 		})
 }
 
@@ -245,7 +269,7 @@ func load(f string) (r lc.Rets, err error) {
 }
 
 func main() {
-	_, err := load("test.luau")
+	_, err := load("../main.luau")
 	if err != nil {
 		fmt.Println("Error:", err)
 		return
