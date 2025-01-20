@@ -52,6 +52,7 @@ func add(p1, p2 *Point) *Point {
 	} else if p2 == nil {
 		return p1
 	}
+
 	var lambda big.Int
 	if p1 == p2 {
 		// lambda = 3 * x(p1) * x(p1) * exp(2 * y(p1), p - 2, p)
@@ -77,6 +78,7 @@ func add(p1, p2 *Point) *Point {
 			),
 		)
 	}
+
 	// modulo p
 	lambda.Mod(&lambda, p)
 
@@ -96,9 +98,9 @@ func add(p1, p2 *Point) *Point {
 
 func mul(p1 *Point, n1 *big.Int) *Point {
 	var r *Point
-	for i := range 256 {
+	for i := range uint(256) {
 		if new(big.Int).And(
-			new(big.Int).Rsh(n1, uint(i)),
+			new(big.Int).Rsh(n1, i),
 			big.NewInt(1),
 		).Cmp(big.NewInt(1)) == 0 {
 			r = add(r, p1)
@@ -114,6 +116,7 @@ func liftX(x *big.Int) *Point {
 	if x.Cmp(p) >= 0 {
 		return nil
 	}
+
 	ySq := new(big.Int).Exp(x, big.NewInt(3), p)
 	ySq.Add(ySq, big.NewInt(7))
 	ySq.Mod(ySq, p)
@@ -126,13 +129,10 @@ func liftX(x *big.Int) *Point {
 
 	if new(big.Int).Exp(y, big.NewInt(2), p).Cmp(ySq) != 0 {
 		return nil
-	}
-
-	if new(big.Int).And(y, big.NewInt(1)).Cmp(big.NewInt(0)) == 0 {
+	} else if new(big.Int).And(y, big.NewInt(1)).Cmp(big.NewInt(0)) == 0 {
 		return &Point{x, y}
-	} else {
-		return &Point{x, new(big.Int).Sub(p, y)}
 	}
+	return &Point{x, new(big.Int).Sub(p, y)}
 }
 
 func intFromBytes(b []byte) *big.Int {

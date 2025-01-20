@@ -12,3 +12,21 @@ print(ishex(hash), ishex(pk), ishex(sig))
 
 print(json.encodestring 'Hello, "world!')
 print(json.encodearray { 1, 2, 3, 4, 5 })
+
+print "Serving on port 3223"
+
+serve(3223, {
+	request = function()
+		print "Request"
+
+		return "Hello, world!"
+	end,
+	websocket = function(ws)
+		print("WS:", ws)
+		while true do
+			print(ws.next())
+
+			ws.send "Hello, world!"
+		end
+	end,
+})
