@@ -1,6 +1,6 @@
 module run
 
-go 1.24rc1
+go 1.24.0
 
 replace github.com/Heliodex/litecode => ../../litecode
 

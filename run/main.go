@@ -48,23 +48,6 @@ func global_sha256(args lc.Args) (r lc.Rets, err error) {
 	return lc.Rets{hex}, nil
 }
 
-func global_ishex(args lc.Args) (r lc.Rets, err error) {
-	s := args.GetString()
-
-	_, err = hex.DecodeString(s)
-	return lc.Rets{err == nil}, nil
-}
-
-func global_ishashfield(args lc.Args) (r lc.Rets, err error) {
-	s := args.GetString()
-
-	// if # followed by [a-zA-Z]
-	if len(s) < 2 || s[0] != '#' || (s[1] < 'a' || s[1] > 'z') && (s[1] < 'A' || s[1] > 'Z') {
-		return lc.Rets{false}, nil
-	}
-	return lc.Rets{true}, nil
-}
-
 func global_print(args lc.Args) (r lc.Rets, err error) {
 	a := args.List
 
@@ -142,7 +125,7 @@ func json_decode(args lc.Args) (r lc.Rets, err error) {
 	var res any
 	err = json.Unmarshal([]byte(obj), &res)
 	if err != nil {
-		return lc.Rets{false, fmt.Sprintf("error decoding json")}, nil
+		return lc.Rets{false, "error decoding json"}, nil
 	}
 
 	c, err := tconvert(res)
@@ -255,11 +238,9 @@ func load(f string) (r lc.Rets, err error) {
 	}
 
 	co, _ := lc.Load(deserialised, f, 1, map[any]any{
-		"verify":      lc.MakeFn("verify", global_verify)[1],
-		"sha256":      lc.MakeFn("sha256", global_sha256)[1],
-		"ishex":       lc.MakeFn("ishex", global_ishex)[1],
-		"ishashfield": lc.MakeFn("ishashfield", global_ishashfield)[1],
-		"print":       lc.MakeFn("print", global_print)[1],
+		"verify": lc.MakeFn("verify", global_verify)[1],
+		"sha256": lc.MakeFn("sha256", global_sha256)[1],
+		"print":  lc.MakeFn("print", global_print)[1],
 
 		"json":  libjson,
 		"serve": lc.MakeFn("serve", net_serve)[1],

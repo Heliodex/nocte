@@ -21,6 +21,9 @@ local function hashEvent(
 	return sha256(event)
 end
 
+local function ishex(str: string) return string.match(str, "^[0-9a-f]+$") end
+local function ishashfield(str: string) return string.match(str, "^#[a-zA-Z]$") end
+
 local msg = {
 	event = function() end,
 	ok = function(id: string, ok: boolean, message: string)
@@ -99,7 +102,10 @@ local checks = {
 		for i, v in tags do
 			if type(i) ~= "number" then
 				return "invalid non-numerical key in tags array"
+			elseif type(v) ~= "table" then
+				return "event tags must be an array of arrays"
 			end
+
 			for i2, v2 in v do
 				if type(i) ~= "number" then
 					return "invalid non-numerical key in tag"
