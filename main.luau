@@ -47,7 +47,7 @@ local lbracket, rbracket, lbrace, rbrace =
 
 -- array starts and ends with square brackets
 local function maybeArray(json: string)
-	local first, last = string.byte(json, 1), string.byte(json, #json)
+	local first, last = string.byte(json, 1), string.byte(json, -1)
 	return first == lbracket and last == rbracket
 end
 
@@ -134,12 +134,6 @@ local checks = {
 	end,
 }
 
-local handleTypes = {
-	EVENT = function(ws: Websocket, event: any) print "EVENT" end,
-	REQ = function(ws: Websocket, ...: any) print "REQ" end,
-	CLOSE = function(ws: Websocket, id: string) print "CLOSE" end,
-}
-
 local function handler(ws: Websocket, subscriptions: { [string]: any })
 	local function invalid(message: string) ws.send(msg.invalid(message)) end
 	local function ok(id: string, ok: boolean, message: string)
@@ -152,7 +146,12 @@ local function handler(ws: Websocket, subscriptions: { [string]: any })
 	elseif event == "" then
 		invalid "empty body, expected message"
 		return
-	elseif maybeObject(event) then
+	end
+
+	local trim = string.match(event, "^%s*(.-)%s*$")
+	if trim then event = trim end
+
+	if maybeObject(event) then
 		invalid "message appears to be a json object, expected array"
 		return
 	elseif not maybeArray(event) then
@@ -180,7 +179,7 @@ local function handler(ws: Websocket, subscriptions: { [string]: any })
 		return
 	elseif first ~= "EVENT" and first ~= "REQ" and first ~= "CLOSE" then
 		invalid(
-			`invalid message type: {first}. must be one of EVENT, REQ, CLOSE`
+			`invalid message type: "{first}". must be one of EVENT, REQ, CLOSE`
 		)
 		return
 	end
@@ -245,7 +244,6 @@ local function handler(ws: Websocket, subscriptions: { [string]: any })
 		end
 
 		for k, v in eventData do
-			print("checking", k, v)
 			local res = checks[k](v)
 			if res then
 				invalid(res)
@@ -280,7 +278,7 @@ local function handler(ws: Websocket, subscriptions: { [string]: any })
 
 		-- the event is valid
 
-		handleTypes[first](ws, eventData)
+		-- do something with it
 
 		return ok(eventData.id, true, "")
 	elseif first == "REQ" then
