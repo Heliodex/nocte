@@ -27,13 +27,9 @@ end
 local function deserialiseStore(bk): { [Serialisable]: Serialisable }
 	local i = 1
 	local char = string.sub(bk, i, i)
-	if char ~= "{" then
-		error(`Expected store start, got {char} at {i}`)
-	end
+	if char ~= "{" then error(`Expected store start, got {char} at {i}`) end
 
-	local function compare(c: string)
-		return char == c
-	end
+	local function compare(c: string) return char == c end
 
 	local function increment()
 		i += 1
@@ -116,9 +112,7 @@ local function deserialiseStore(bk): { [Serialisable]: Serialisable }
 			tableData[key] = value
 			increment()
 
-			if compare "}" then
-				break
-			end
+			if compare "}" then break end
 		end
 
 		return tableData
@@ -128,9 +122,7 @@ local function deserialiseStore(bk): { [Serialisable]: Serialisable }
 end
 
 local function deepCopy(original: any): any
-	if type(original) ~= "table" then
-		return original
-	end
+	if type(original) ~= "table" then return original end
 
 	local copy = {}
 	for k, v in original do
@@ -165,13 +157,9 @@ local function Store<K, V>(serialised: string?): Store<K, V>
 		rawData[key] = deepCopy(value)
 	end
 
-	function store.get(key: K): V
-		return deepCopy(rawData[key])
-	end
+	function store.get(key: K): V return deepCopy(rawData[key]) end
 
-	function store.serialise(): string
-		return serProperty(rawData)
-	end
+	function store.serialise(): string return serProperty(rawData) end
 
 	return store
 end

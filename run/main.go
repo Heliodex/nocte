@@ -136,7 +136,7 @@ func json_decode(args lc.Args) (r lc.Rets, err error) {
 	return lc.Rets{true, c}, nil
 }
 
-var libjson = lc.NewTable([][2]any{
+var libjson = lc.NewLib([]lc.Function{
 	lc.MakeFn("encodestring", json_encodestring),
 	lc.MakeFn("encodearray", json_encodearray),
 	lc.MakeFn("decode", json_decode),
@@ -173,7 +173,7 @@ func serve(port float64, reqHandler func(a2 ...any) string, wsHandler func(a2 ..
 				return lc.Rets{string(data[:n])}, nil
 			}
 
-			wsHandler(lc.NewTable([][2]any{
+			wsHandler(lc.NewLib([]lc.Function{
 				lc.MakeFn("send", send),
 				lc.MakeFn("next", next),
 			}))
@@ -205,7 +205,7 @@ func net_serve(args lc.Args) (r lc.Rets, err error) {
 	return nil, serve(
 		port,
 		func(a2 ...any) string {
-			ret, err := (*reqHandler)(args.Co, a2...)
+			ret, err := (*reqHandler.Run)(args.Co, a2...)
 			if err != nil {
 				args.Co.Error(err)
 			} else if len(ret) == 0 {
@@ -220,31 +220,31 @@ func net_serve(args lc.Args) (r lc.Rets, err error) {
 			return s
 		},
 		func(a2 ...any) {
-			if _, err := (*wsHandler)(args.Co, a2...); err != nil {
+			if _, err := (*wsHandler.Run)(args.Co, a2...); err != nil {
 				args.Co.Error(err)
 			}
 		})
 }
 
 func load(f string) (r lc.Rets, err error) {
-	bytecode, err := lc.Compile(f)
+	c := lc.NewCompiler(1)
+
+	p, err := c.Compile(f)
 	if err != nil {
 		return
 	}
 
-	deserialised, err := lc.Deserialise(bytecode)
-	if err != nil {
-		return
+	env := lc.Env{
+		"json": libjson,
 	}
 
-	co, _ := lc.Load(deserialised, f, 1, map[any]any{
-		"verify": lc.MakeFn("verify", global_verify)[1],
-		"sha256": lc.MakeFn("sha256", global_sha256)[1],
-		"print":  lc.MakeFn("print", global_print)[1],
+	env.AddFn(lc.MakeFn("verify", global_verify))
+	env.AddFn(lc.MakeFn("sha256", global_sha256))
+	env.AddFn(lc.MakeFn("print", global_print))
 
-		"json":  libjson,
-		"serve": lc.MakeFn("serve", net_serve)[1],
-	})
+	env.AddFn(lc.MakeFn("serve", net_serve))
+
+	co, _ := p.Load(env)
 
 	return co.Resume()
 }
