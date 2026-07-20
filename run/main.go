@@ -10,7 +10,7 @@ import (
 
 	"golang.org/x/net/websocket"
 
-	lc "github.com/Heliodex/litecode"
+	lc "github.com/Heliodex/coputer/litecode"
 )
 
 func global_verify(args lc.Args) (r lc.Rets, err error) {
