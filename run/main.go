@@ -10,10 +10,13 @@ import (
 
 	"golang.org/x/net/websocket"
 
-	lc "github.com/Heliodex/coputer/litecode"
+	"github.com/Heliodex/coputer/litecode/types"
+	"github.com/Heliodex/coputer/litecode/vm"
+	"github.com/Heliodex/coputer/litecode/vm/compile"
+	"github.com/Heliodex/coputer/litecode/vm/std"
 )
 
-func global_verify(args lc.Args) (r lc.Rets, err error) {
+func global_verify(args std.Args) (r []types.Val, err error) {
 	hashs, pks, sigs := args.GetString(), args.GetString(), args.GetString()
 
 	hash, err := hex.DecodeString(hashs)
@@ -35,20 +38,20 @@ func global_verify(args lc.Args) (r lc.Rets, err error) {
 	if err != nil {
 		return nil, fmt.Errorf("error verifying hash: %w", err)
 	}
-	return lc.Rets{res}, nil
+	return []types.Val{res}, nil
 }
 
-func global_sha256(args lc.Args) (r lc.Rets, err error) {
+func global_sha256(args std.Args) (r []types.Val, err error) {
 	msg := args.GetString()
 
 	hash := crypto.SHA256.New()
 	hash.Write([]byte(msg))
 
 	hex := hex.EncodeToString(hash.Sum(nil))
-	return lc.Rets{hex}, nil
+	return []types.Val{hex}, nil
 }
 
-func global_print(args lc.Args) (r lc.Rets, err error) {
+func global_print(args std.Args) (r []types.Val, err error) {
 	a := args.List
 
 	for i, v := range a {
@@ -62,7 +65,7 @@ func global_print(args lc.Args) (r lc.Rets, err error) {
 	return nil, nil
 }
 
-func json_encodestring(args lc.Args) (r lc.Rets, err error) {
+func json_encodestring(args std.Args) (r []types.Val, err error) {
 	obj := args.GetString()
 
 	res, err := json.Marshal(obj)
@@ -70,15 +73,15 @@ func json_encodestring(args lc.Args) (r lc.Rets, err error) {
 		return nil, fmt.Errorf("error encoding string: %w", err)
 	}
 
-	return lc.Rets{string(res)}, nil
+	return []types.Val{string(res)}, nil
 }
 
-func json_encodearray(args lc.Args) (r lc.Rets, err error) {
+func json_encodearray(args std.Args) (r []types.Val, err error) {
 	obj := args.GetTable()
 
-	arr := obj.Array
+	arr := obj.List
 	if arr == nil {
-		return lc.Rets{"[]"}, nil
+		return []types.Val{"[]"}, nil
 	}
 
 	res, err := json.Marshal(arr)
@@ -86,7 +89,7 @@ func json_encodearray(args lc.Args) (r lc.Rets, err error) {
 		return nil, fmt.Errorf("error encoding array: %w", err)
 	}
 
-	return lc.Rets{string(res)}, nil
+	return []types.Val{string(res)}, nil
 }
 
 func tconvert(obj any) (any, error) {
@@ -94,7 +97,7 @@ func tconvert(obj any) (any, error) {
 	case bool, float64, string, nil:
 		return v, nil
 	case []any:
-		arr := make([]any, len(v))
+		arr := make([]types.Val, len(v))
 		for i, v2 := range v {
 			c, err := tconvert(v2)
 			if err != nil {
@@ -103,9 +106,9 @@ func tconvert(obj any) (any, error) {
 			arr[i] = c
 		}
 
-		return &lc.Table{Array: arr}, nil
+		return &types.Table{List: arr}, nil
 	case map[string]any:
-		h := make(map[any]any, len(v))
+		h := make(map[types.Val]types.Val, len(v))
 		for k, v := range v {
 			c, err := tconvert(v)
 			if err != nil {
@@ -114,18 +117,18 @@ func tconvert(obj any) (any, error) {
 			h[k] = c
 		}
 
-		return &lc.Table{Hash: h}, nil
+		return &types.Table{Hash: h}, nil
 	}
 	return nil, errors.New("unsupported type")
 }
 
-func json_decode(args lc.Args) (r lc.Rets, err error) {
+func json_decode(args std.Args) (r []types.Val, err error) {
 	obj := args.GetString()
 
 	var res any
 	err = json.Unmarshal([]byte(obj), &res)
 	if err != nil {
-		return lc.Rets{false, "error decoding json"}, nil
+		return []types.Val{false, "error decoding json"}, nil
 	}
 
 	c, err := tconvert(res)
@@ -133,16 +136,16 @@ func json_decode(args lc.Args) (r lc.Rets, err error) {
 		return nil, err
 	}
 
-	return lc.Rets{true, c}, nil
+	return []types.Val{true, c}, nil
 }
 
-var libjson = lc.NewLib([]lc.Function{
-	lc.MakeFn("encodestring", json_encodestring),
-	lc.MakeFn("encodearray", json_encodearray),
-	lc.MakeFn("decode", json_decode),
+var libjson = std.NewLib([]types.Function{
+	std.MakeFn("encodestring", json_encodestring),
+	std.MakeFn("encodearray", json_encodearray),
+	std.MakeFn("decode", json_decode),
 })
 
-func serve(port float64, reqHandler func(a2 ...any) string, wsHandler func(a2 ...any)) error {
+func serve(port float64, reqHandler func(a2 ...types.Val) string, wsHandler func(a2 ...types.Val)) error {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if req.Header.Get("Upgrade") != "websocket" {
 			res := reqHandler()
@@ -157,25 +160,25 @@ func serve(port float64, reqHandler func(a2 ...any) string, wsHandler func(a2 ..
 		}
 
 		server.Handler = func(ws *websocket.Conn) {
-			send := func(args lc.Args) (r lc.Rets, err error) {
+			send := func(args std.Args) (r []types.Val, err error) {
 				data := args.GetString()
 
 				_, err = ws.Write([]byte(data))
 				return nil, err
 			}
-			next := func(args lc.Args) (r lc.Rets, err error) {
+			next := func(args std.Args) (r []types.Val, err error) {
 				data := make([]byte, 1024)
 				n, err := ws.Read(data)
 				if err != nil {
 					return nil, err
 				}
 
-				return lc.Rets{string(data[:n])}, nil
+				return []types.Val{string(data[:n])}, nil
 			}
 
-			wsHandler(lc.NewLib([]lc.Function{
-				lc.MakeFn("send", send),
-				lc.MakeFn("next", next),
+			wsHandler(std.NewLib([]types.Function{
+				std.MakeFn("send", send),
+				std.MakeFn("next", next),
 			}))
 		}
 
@@ -185,26 +188,26 @@ func serve(port float64, reqHandler func(a2 ...any) string, wsHandler func(a2 ..
 	return http.ListenAndServe(fmt.Sprintf(":%d", int(port)), handler)
 }
 
-func net_serve(args lc.Args) (r lc.Rets, err error) {
+func net_serve(args std.Args) (r []types.Val, err error) {
 	port := args.GetNumber()
 	opts := args.GetTable()
 
 	request := opts.GetHash("request")
 	websocket := opts.GetHash("websocket")
 
-	reqHandler, ok := request.(lc.Function)
+	reqHandler, ok := request.(types.Function)
 	if !ok {
 		return nil, errors.New("invalid request handler")
 	}
 
-	wsHandler, ok := websocket.(lc.Function)
+	wsHandler, ok := websocket.(types.Function)
 	if !ok {
 		return nil, errors.New("invalid websocket handler")
 	}
 
 	return nil, serve(
 		port,
-		func(a2 ...any) string {
+		func(a2 ...types.Val) string {
 			ret, err := (*reqHandler.Run)(args.Co, a2...)
 			if err != nil {
 				args.Co.Error(err)
@@ -219,32 +222,32 @@ func net_serve(args lc.Args) (r lc.Rets, err error) {
 
 			return s
 		},
-		func(a2 ...any) {
+		func(a2 ...types.Val) {
 			if _, err := (*wsHandler.Run)(args.Co, a2...); err != nil {
 				args.Co.Error(err)
 			}
 		})
 }
 
-func load(f string) (r lc.Rets, err error) {
-	c := lc.NewCompiler(1)
+func load(f string) (r []types.Val, err error) {
+	c := compile.MakeCompiler(1)
 
-	p, err := c.Compile(f)
+	p, err := compile.Compile(c, f)
 	if err != nil {
 		return
 	}
 
-	env := lc.Env{
+	env := types.Env{
 		"json": libjson,
 	}
 
-	env.AddFn(lc.MakeFn("verify", global_verify))
-	env.AddFn(lc.MakeFn("sha256", global_sha256))
-	env.AddFn(lc.MakeFn("print", global_print))
+	env.AddFn(std.MakeFn("verify", global_verify))
+	env.AddFn(std.MakeFn("sha256", global_sha256))
+	env.AddFn(std.MakeFn("print", global_print))
 
-	env.AddFn(lc.MakeFn("serve", net_serve))
+	env.AddFn(std.MakeFn("serve", net_serve))
 
-	co, _ := p.Load(env)
+	co, _ := vm.Load(p, env, types.TestArgs{})
 
 	return co.Resume()
 }
